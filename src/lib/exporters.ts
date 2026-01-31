@@ -2,6 +2,7 @@ import { FleetNode } from "./fleet";
 
 export function downloadCSV(filename: string, rows: FleetNode[]) {
   const headers = Object.keys(rows[0] ?? {}) as Array<keyof FleetNode>;
+
   const escape = (v: unknown) => {
     const s = String(v ?? "");
     if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
@@ -28,4 +29,8 @@ function triggerDownload(filename: string, blob: Blob) {
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
-  document
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
