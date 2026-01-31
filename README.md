@@ -1,149 +1,93 @@
-# Production Hardware Systems Observability Dashboard
+# Production Hardware Validation & Fleet Triage Console
 
-**Live Demo:** https://production-hardware-systems-observability.vercel.app  
-**Tech Stack:** React, TypeScript, Vite, Vercel  
-**Domain:** Hardware Systems Engineering • Production Infrastructure • Data Center Observability
-
----
-
-## Overview
-
-This project is designed as a **production-style internal engineering tool** aligned with the **Meta Hardware Systems Engineer Intern** role. It demonstrates how large-scale server and hardware infrastructure can be monitored, validated, and analyzed through system-level telemetry and observability workflows similar to those used across hyperscale data centers.
-
-Meta’s servers and data centers form the foundation of its rapidly scaling infrastructure. This dashboard reflects how infrastructure teams build internal tools to ensure hardware reliability, performance efficiency, and early failure detection across large server fleets.
+**Live Demo:** https://production-hardware-systems-observa-xi.vercel.app  
+**Domain:** Hardware Systems Engineering • Fleet Validation • Power/Thermal Telemetry • Failure Triage  
+**Build:** React + TypeScript + Vite (Pure CSS) • **Deploy:** Vercel • **Mode:** In-browser simulation (no backend)
 
 ---
 
-## Objective
+## Why this exists (Meta Hardware Intern-aligned)
 
-The core objective of this project is to simulate how Meta’s infrastructure teams:
-
-- Develop and maintain hardware validation and observability tools  
-- Analyze fleet-wide system behavior at scale  
-- Diagnose hardware and system failures using telemetry data  
-- Communicate system health clearly to cross-functional stakeholders  
-
-The dashboard represents an **internal-facing system**, not a consumer application, with emphasis on hardware-relevant signals and production reasoning.
+This project simulates the **kind of internal tooling used to validate hardware + triage fleet issues** at hyperscale:
+- Fleet-level observability for **power / thermal / reliability** signals
+- Rapid identification of **critical nodes** and dominant **failure classes**
+- A “Validation Suite” that produces a **run_id** and a **pass/fail gate** (exportable report)
+- Lightweight, production-style UX designed for **operators + hardware/system engineers**
 
 ---
 
-## Hardware Fleet Simulation
+## What the console does
 
-The application simulates a fleet of **production hardware systems operating inside a data center environment**. Each system exposes metrics commonly used by hardware and systems engineers, including:
+### ✅ Fleet Simulator (1000 nodes)
+Each node includes realistic server telemetry fields:
 
-- CPU utilization (%)
-- Memory utilization (%)
-- Request latency (ms)
-- Error rate (%)
-- Throughput (requests per second)
-- Aggregated system health state
+`node_id, rack, zone, cpu_temp_c, power_w, fan_rpm, throttle_events, ecc_errors, nic_errors, reboot_count, last_seen, status, failure_class, health_score`
 
-All telemetry is generated in-browser to emulate real monitoring data collected from thousands of servers across distributed infrastructure.
-
----
-
-## Fleet-Level Observability
-
-The dashboard provides **fleet-level visibility** using production-oriented KPIs such as:
-
-- Total systems monitored
-- Healthy vs degraded vs critical system distribution
-- P95 latency (hardware-relevant performance metric)
-- Average error rate across the fleet
-
-These indicators mirror how infrastructure teams reason about performance regressions, capacity stress, and early hardware degradation signals.
+Telemetry generation simulates:
+- Thermal spikes + throttling
+- Power tail events
+- ECC bursts (memory health)
+- NIC link flaps
+- Boot-loop style instability
 
 ---
 
-## System Inspection & Analysis
+## Key Features (production-style)
 
-An interactive system table allows engineers to:
+### 📊 KPI Cards (fleet health at a glance)
+- **Fleet Size**
+- **Critical Nodes**
+- **P95 CPU Temp**
+- **P95 Power**
 
-- Sort systems by latency and error rate
-- Filter systems by health state
-- Rapidly isolate degraded or failing hardware
+### 🧪 Run Validation Suite (gating)
+One click produces:
+- `run_id`
+- Check-level results (pass/fail)
+- Overall fleet gate: **PASS / FAIL**
+- Adds an entry to the **event timeline**
 
-This reflects real-world workflows where engineers must quickly identify problematic machines within large server populations and prioritize investigation.
+### 🔁 Regenerate Telemetry
+Refreshes fleet data and logs the latest changes as events.
 
----
+### 📥 Exporters (operator-ready)
+- **Download CSV** (filtered/sorted rows)
+- **Download Validation Report (Markdown)** for reviews / handoffs / documentation
 
-## Validation & Re-Analysis Workflow
+### 🧾 Fleet Table (triage-first)
+- Sortable columns
+- Search by `node_id / rack / zone`
+- Filter by **status** and **failure_class**
+- Designed for fast fleet scanning and investigation
 
-The dashboard includes a **re-analysis control** that regenerates fleet telemetry, simulating new monitoring intervals similar to:
-
-- Periodic hardware health checks  
-- Validation runs during server bring-up  
-- Lifecycle testing and production monitoring cycles  
-
-This aligns with how hardware validation and system testing are repeatedly executed throughout the product lifecycle.
-
----
-
-## Architecture & Design Rationale
-
-The project is intentionally **frontend-only** to mirror internal validation and design-review tools where the focus is on:
-
-- Hardware and system behavior
-- Telemetry interpretation
-- Observability logic
-
-Telemetry simulation, metric aggregation, and health classification are all performed within the application, emphasizing **system reasoning over backend complexity**.
-
----
-
-## Health Classification Logic
-
-System health is derived from combined system-level signals such as latency, error rate, and throughput behavior:
-
-- **Healthy:** Low latency and low error rate  
-- **Degraded:** Moderate latency or rising error indicators  
-- **Critical:** High latency, high error rate, or throughput collapse  
-
-This reflects how hardware failures often surface indirectly through performance and reliability metrics rather than explicit fault flags.
+### 🕒 Event Timeline
+Shows the last 20 significant fleet transitions and validation runs:
+- Health state changes (HEALTHY → DEGRADED → CRITICAL)
+- Failure class changes
+- Validation suite PASS/FAIL events
 
 ---
 
-## Alignment with Hardware Systems Engineer Intern Role
-
-This project directly maps to the responsibilities of a Hardware Systems Engineer Intern by demonstrating:
-
-- Development of hardware validation and observability tools  
-- Analysis of large-scale server fleet data  
-- Diagnosis of hardware and system-level failures  
-- Clear communication of findings through internal dashboards  
-- Cross-functional systems thinking across hardware, power, thermal, and software layers  
+## Failure Classes Modeled
+- `THERMAL_THROTTLE` (thermal risk / throttling)
+- `POWER_SPIKE` (power delivery tail behavior)
+- `ECC_BURST` (DIMM reliability risk)
+- `NIC_FLAP` (network interface instability)
+- `BOOT_LOOP` (reboot instability)
+- `NONE`
 
 ---
 
-## Skills Demonstrated
-
-- Hardware systems observability concepts  
-- Production infrastructure reasoning  
-- Fleet-scale data modeling and aggregation  
-- Internal tooling design for data centers  
-- Clear communication of system health and reliability  
-
----
-
-## Deployment
-
-The dashboard is deployed using a standard **Vite production build pipeline** on **Vercel**:
-
-- Build command: `npm run build`
-- Output directory: `dist`
-- No environment variables
-- No backend services or local dependencies
-
-This ensures a clean, reproducible production deployment suitable for demonstration and review.
+## Tech Stack
+- **Frontend:** React + TypeScript
+- **Build:** Vite
+- **UI:** Pure CSS (no component libraries)
+- **Deploy:** Vercel  
+- **Data:** Synthetic in-browser simulation (no env vars, no backend)
 
 ---
 
-## Why This Project Is Distinct
-
-This is not a generic dashboard or tutorial project. It is purpose-built to reflect how **hardware systems engineers design tools to validate, monitor, and reason about production infrastructure at scale**. The focus is on observability, reliability, and data-driven diagnosis rather than UI complexity or buzzword-driven features.
-
----
-
-## Summary
-
-This project demonstrates a strong understanding of **hardware systems validation, production infrastructure monitoring, fleet-scale analysis, and internal tooling design**, closely mirroring the real-world responsibilities and expectations of a **Hardware Systems Engineer Intern** working on large-scale data center infrastructure at Meta.
+## How to run locally (optional)
+```bash
+npm install
+npm run dev
