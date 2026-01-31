@@ -1,30 +1,37 @@
 import React from "react";
 import { FleetEvent } from "../lib/fleet";
 
-export function Timeline({ events }: { events: FleetEvent[] }) {
+function fmt(ts: number) {
+  const d = new Date(ts);
+  return `${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
+}
+
+export function Timeline(props: { events: FleetEvent[] }) {
   return (
-    <div className="timeline">
-      {events.length === 0 ? (
-        <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 13, padding: 10 }}>
-          No events yet. Regenerate telemetry or run a validation suite.
-        </div>
-      ) : (
-        events.map((e, idx) => {
+    <div className="panel">
+      <div className="panel__header">
+        <div className="panel__title">Event Timeline</div>
+        <div className="panel__subtitle">Last 20 state changes / runs</div>
+      </div>
+
+      <div className="timeline">
+        {props.events.map((e, idx) => {
           const sevClass =
-            e.severity === "CRIT" ? "sevCrit" : e.severity === "WARN" ? "sevWarn" : "sevInfo";
+            e.severity === "CRIT" ? "sev--crit" : e.severity === "WARN" ? "sev--warn" : "sev--info";
           return (
-            <div className="event" key={`${e.ts}-${idx}`}>
-              <div className="eventTime">{new Date(e.ts).toLocaleTimeString()}</div>
-              <div>
-                <div className={`eventTitle ${sevClass}`}>
-                  [{e.severity}] {e.title}
+            <div className="tItem" key={idx}>
+              <div className={`sev ${sevClass}`} />
+              <div className="tBody">
+                <div className="tTop">
+                  <span className="tTitle">{e.title}</span>
+                  <span className="tTime">{fmt(e.ts)}</span>
                 </div>
-                <div className="eventDetail">{e.detail}</div>
+                <div className="tDetail">{e.detail}</div>
               </div>
             </div>
           );
-        })
-      )}
+        })}
+      </div>
     </div>
   );
 }
