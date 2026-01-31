@@ -1,86 +1,98 @@
 import React from "react";
-import { FailureClass, HealthStatus, ValidationRun } from "../lib/fleet";
+import { FailureClass, HealthStatus } from "../lib/fleet";
 
-export function ControlsBar({
-  statusFilter,
-  onStatusFilter,
-  failureFilter,
-  onFailureFilter,
-  onRegenerate,
-  onRunValidation,
-  onDownloadCSV,
-  onDownloadReport,
-  latestRun,
-}: {
+export function ControlsBar(props: {
   statusFilter: HealthStatus | "ALL";
-  onStatusFilter: (v: HealthStatus | "ALL") => void;
   failureFilter: FailureClass | "ALL";
-  onFailureFilter: (v: FailureClass | "ALL") => void;
+  query: string;
+
+  onChangeStatus: (v: HealthStatus | "ALL") => void;
+  onChangeFailure: (v: FailureClass | "ALL") => void;
+  onChangeQuery: (v: string) => void;
+
   onRegenerate: () => void;
   onRunValidation: () => void;
-  onDownloadCSV: () => void;
+  onDownloadCsv: () => void;
   onDownloadReport: () => void;
-  latestRun: ValidationRun | null;
+
+  lastUpdated: string;
+  lastRun: string;
+  passFail: string;
 }) {
   return (
     <div className="controls">
-      <div className="controlGroup">
-        <select
-          className="select"
-          value={statusFilter}
-          onChange={(e) => onStatusFilter(e.target.value as any)}
-        >
-          <option value="ALL">Status: All</option>
-          <option value="HEALTHY">Status: Healthy</option>
-          <option value="DEGRADED">Status: Degraded</option>
-          <option value="CRITICAL">Status: Critical</option>
-        </select>
+      <div className="controls__row">
+        <div className="controls__group">
+          <label className="label">Status</label>
+          <select
+            className="select"
+            value={props.statusFilter}
+            onChange={(e) => props.onChangeStatus(e.target.value as any)}
+          >
+            <option value="ALL">All</option>
+            <option value="HEALTHY">HEALTHY</option>
+            <option value="DEGRADED">DEGRADED</option>
+            <option value="CRITICAL">CRITICAL</option>
+          </select>
+        </div>
 
-        <select
-          className="select"
-          value={failureFilter}
-          onChange={(e) => onFailureFilter(e.target.value as any)}
-        >
-          <option value="ALL">Failure: All</option>
-          <option value="NONE">Failure: NONE</option>
-          <option value="THERMAL_THROTTLE">Failure: THERMAL_THROTTLE</option>
-          <option value="POWER_SPIKE">Failure: POWER_SPIKE</option>
-          <option value="ECC_BURST">Failure: ECC_BURST</option>
-          <option value="NIC_FLAP">Failure: NIC_FLAP</option>
-          <option value="BOOT_LOOP">Failure: BOOT_LOOP</option>
-        </select>
+        <div className="controls__group">
+          <label className="label">Failure Class</label>
+          <select
+            className="select"
+            value={props.failureFilter}
+            onChange={(e) => props.onChangeFailure(e.target.value as any)}
+          >
+            <option value="ALL">All</option>
+            <option value="NONE">NONE</option>
+            <option value="THERMAL_THROTTLE">THERMAL_THROTTLE</option>
+            <option value="POWER_SPIKE">POWER_SPIKE</option>
+            <option value="ECC_BURST">ECC_BURST</option>
+            <option value="NIC_FLAP">NIC_FLAP</option>
+            <option value="BOOT_LOOP">BOOT_LOOP</option>
+          </select>
+        </div>
+
+        <div className="controls__group controls__group--grow">
+          <label className="label">Search</label>
+          <input
+            className="input"
+            value={props.query}
+            onChange={(e) => props.onChangeQuery(e.target.value)}
+            placeholder="node_id, rack, zone, status, failure…"
+          />
+        </div>
+
+        <div className="controls__stats">
+          <div className="stat">
+            <span className="stat__k">Updated</span>
+            <span className="stat__v">{props.lastUpdated}</span>
+          </div>
+          <div className="stat">
+            <span className="stat__k">Last Run</span>
+            <span className="stat__v">{props.lastRun}</span>
+          </div>
+          <div className={`stat stat--pf ${props.passFail === "FAIL" ? "isFail" : props.passFail === "PASS" ? "isPass" : ""}`}>
+            <span className="stat__k">Suite</span>
+            <span className="stat__v">{props.passFail}</span>
+          </div>
+        </div>
       </div>
 
-      <div className="controlGroup">
-        <button className="button ghost" onClick={onRegenerate}>
+      <div className="controls__row controls__row--buttons">
+        <button className="btn btn--ghost" onClick={props.onRegenerate}>
           Regenerate Telemetry
         </button>
-        <button className="button primary" onClick={onRunValidation}>
+        <button className="btn btn--primary" onClick={props.onRunValidation}>
           Run Validation Suite
         </button>
-        <button className="button warn" onClick={onDownloadCSV}>
+        <div className="controls__spacer" />
+        <button className="btn btn--ghost" onClick={props.onDownloadCsv}>
           Download CSV
         </button>
-        <button className="button ghost" onClick={onDownloadReport}>
-          Download Report
+        <button className="btn btn--ghost" onClick={props.onDownloadReport}>
+          Download Report (MD)
         </button>
-      </div>
-
-      <div className="runMeta">
-        {latestRun ? (
-          <>
-            <span className="mono">
-              last_run={latestRun.run_id.slice(0, 8)}
-            </span>
-            <span>•</span>
-            <span>
-              {latestRun.summary.overall_pass ? "PASS" : "FAIL"}{" "}
-              (pass={latestRun.summary.pass_count}, fail={latestRun.summary.fail_count})
-            </span>
-          </>
-        ) : (
-          <span>Run a suite to generate a validation summary.</span>
-        )}
       </div>
     </div>
   );
