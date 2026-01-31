@@ -1,333 +1,374 @@
-import React from "react";
+import React, { useMemo, useRef, useState } from "react";
+import "./styles.css";
 
-type Row = {
-  id: string;
-  service: string;
-  status: "OK" | "WARN" | "DOWN";
-  latencyMs: number;
-  updated: string;
-};
+import { ControlsBar } from "./components/ControlsBar";
+import { KpiCard } from "./components/KpiCard";
+import { FleetTable, SortKey } from "./components/FleetTable";
+import { Timeline } from "./components/Timeline";
 
-const rows: Row[] = [
-  { id: "REQ-1042", service: "API Gateway", status: "OK", latencyMs: 86, updated: "2m ago" },
-  { id: "REQ-1041", service: "Auth", status: "WARN", latencyMs: 182, updated: "5m ago" },
-  { id: "REQ-1040", service: "Payments", status: "OK", latencyMs: 121, updated: "8m ago" },
-  { id: "REQ-1039", service: "Search", status: "DOWN", latencyMs: 0, updated: "11m ago" },
-  { id: "REQ-1038", service: "Notifications", status: "OK", latencyMs: 94, updated: "14m ago" }
-];
+import {
+  FailureClass,
+  FleetNode,
+  FleetSnapshot,
+  HealthStatus,
+  ValidationRun,
+  diffToEvents,
+  generateFleetSnapshot,
+  runValidationSuite,
+} from "./lib/fleet";
+import { p95 } from "./lib/stats";
+import { downloadCSV, downloadMarkdown } from "./lib/exporters";
 
-function statusClass(s: Row["status"]) {
-  if (s === "OK") return "pill pill-ok";
-  if (s === "WARN") return "pill pill-warn";
-  return "pill pill-down";
-}
+const DEFAULT_FLEET_SIZE = 1000;
 
 export default function App() {
-  const total = rows.length;
-  const ok = rows.filter((r) => r.status === "OK").length;
-  const warn = rows.filter((r) => r.status === "WARN").length;
-  const down = rows.filter((r) => r.status === "DOWN").length;
+  const [snapshot, setSnapshot] = useState<FleetSnapshot>(() =>
+    generateFleetSnapshot(DEFAULT_FLEET_SIZE)
+  );
 
-  const latencies = rows.filter((r) => r.latencyMs > 0).map((r) => r.latencyMs);
-  const avgLatency =
-    latencies.length === 0 ? 0 : Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length);
+  const prevSnapshotRef = useRef<FleetSnapshot | null>(null);
+
+  const [statusFilter, setStatusFilter] = useState<HealthStatus | "ALL">("ALL");
+  const [failureFilter, setFailureFilter] = useState<FailureClass | "ALL">(
+    "ALL"
+  );
+  const [sortKey, setSortKey] = useState<SortKey>("health_score");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
+  const [latestRun, setLatestRun] = useState<ValidationRun | null>(null);
+
+  const fleet = snapshot.nodes;
+
+  const kpis = useMemo(() => {
+    const critical = fleet.filter((n) => n.status === "CRITICAL").length;
+    const p95Temp = p95(fleet.map((n) => n.cpu_temp_c));
+    const p95Power = p95(fleet.map((n) => n.power_w));
+    return {
+      fleetSize: fleet.length,
+      critical,
+      p95Temp,
+      p95Power,
+    };
+  }, [fleet]);
+
+  const events = useMemo(() => snapshot.events.slice(0, 20), [snapshot.events]);
+
+  const filteredSorted = useMemo(() => {
+    const filtered = fleet.filter((n) => {
+      const okStatus = statusFilter === "ALL" ? true : n.status === statusFilter;
+      const okFailure =
+        failureFilter === "ALL" ? true : n.failure_class === failureFilter;
+      return okStatus && okFailure;
+    });
+
+    const dir = sortDir === "asc" ? 1 : -1;
+
+    const toNum = (v: unknown) => (typeof v === "number" ? v : Number(v));
+
+    const sorted = [...filtered].sort((a, b) => {
+      switch (sortKey) {
+        case "cpu_temp_c":
+          return dir * (a.cpu_temp_c - b.cpu_temp_c);
+        case "power_w":
+          return dir * (a.power_w - b.power_w);
+        case "fan_rpm":
+          return dir * (a.fan_rpm - b.fan_rpm);
+        case "ecc_errors":
+          return dir * (a.ecc_errors - b.ecc_errors);
+        case "nic_errors":
+          return dir * (a.nic_errors - b.nic_errors);
+        case "reboot_count":
+          return dir * (a.reboot_count - b.reboot_count);
+        case "throttle_events":
+          return dir * (a.throttle_events - b.throttle_events);
+        case "health_score":
+          return dir * (a.health_score - b.health_score);
+        case "last_seen":
+          return dir * (a.last_seen - b.last_seen);
+        case "status":
+          return dir * a.status.localeCompare(b.status);
+        case "failure_class":
+          return dir * a.failure_class.localeCompare(b.failure_class);
+        case "rack":
+          return dir * a.rack.localeCompare(b.rack);
+        case "zone":
+          return dir * a.zone.localeCompare(b.zone);
+        default:
+          return dir * (toNum((a as any)[sortKey]) - toNum((b as any)[sortKey]));
+      }
+    });
+
+    return sorted;
+  }, [fleet, statusFilter, failureFilter, sortKey, sortDir]);
+
+  const selected = useMemo(() => {
+    if (!selectedNodeId) return null;
+    return fleet.find((n) => n.node_id === selectedNodeId) ?? null;
+  }, [fleet, selectedNodeId]);
+
+  function handleRegenerate() {
+    const prev = snapshot;
+    prevSnapshotRef.current = prev;
+
+    const next = generateFleetSnapshot(DEFAULT_FLEET_SIZE, prev);
+    // If you want the timeline to reflect changes specifically:
+    next.events = diffToEvents(prev, next).slice(0, 20);
+    setSnapshot(next);
+    setLatestRun(null);
+
+    // Keep selection if node still exists
+    if (selectedNodeId && !next.nodes.some((n) => n.node_id === selectedNodeId)) {
+      setSelectedNodeId(null);
+    }
+  }
+
+  function handleRunValidation() {
+    const run = runValidationSuite(snapshot);
+    setLatestRun(run);
+
+    // Push a “run event” to top of timeline
+    setSnapshot((s) => ({
+      ...s,
+      events: [
+        {
+          ts: Date.now(),
+          severity: run.summary.overall_pass ? "INFO" : "WARN",
+          title: "Validation suite completed",
+          detail: `Run ${run.run_id} • PASS=${run.summary.pass_count} FAIL=${run.summary.fail_count}`,
+        },
+        ...s.events,
+      ].slice(0, 20),
+    }));
+  }
+
+  function handleDownloadCSV() {
+    downloadCSV("fleet_snapshot.csv", snapshot.nodes);
+  }
+
+  function handleDownloadReport() {
+    const md = buildValidationReportMarkdown(snapshot, latestRun);
+    downloadMarkdown("validation_report.md", md);
+  }
 
   return (
-    <div className="page">
-      <style>{css}</style>
-
-      <header className="header">
-        <div>
-          <h1 className="title">Minimal Dashboard</h1>
-          <p className="subtitle">Pure CSS cards + table · zero extra libraries</p>
-        </div>
-        <div className="meta">
-          <span className="chip">Build: Vite + React + TS</span>
-          <span className="chip">Output: dist</span>
-        </div>
-      </header>
-
-      <section className="grid">
-        <div className="card">
-          <div className="card-label">Requests</div>
-          <div className="card-value">{total}</div>
-          <div className="card-foot">Last 15 minutes</div>
-        </div>
-
-        <div className="card">
-          <div className="card-label">Healthy</div>
-          <div className="card-value">{ok}</div>
-          <div className="card-foot">Services OK</div>
-        </div>
-
-        <div className="card">
-          <div className="card-label">Warnings</div>
-          <div className="card-value">{warn}</div>
-          <div className="card-foot">Investigate soon</div>
-        </div>
-
-        <div className="card">
-          <div className="card-label">Avg Latency</div>
-          <div className="card-value">{avgLatency}ms</div>
-          <div className="card-foot">Across non-zero samples</div>
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="panel-head">
-          <h2 className="panel-title">Recent Activity</h2>
-          <div className="panel-right">
-            <span className="chip">Down: {down}</span>
-            <span className="chip">Updated just now</span>
+    <div className="app">
+      <header className="topbar">
+        <div className="brand">
+          <div className="title">Production Hardware Validation Console</div>
+          <div className="subtitle">
+            Fleet telemetry • power/thermal • failure triage • validation runs
           </div>
         </div>
 
-        <div className="table-wrap" role="region" aria-label="Recent activity table">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Service</th>
-                <th>Status</th>
-                <th className="right">Latency</th>
-                <th className="right">Updated</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td className="mono">{r.id}</td>
-                  <td>{r.service}</td>
-                  <td>
-                    <span className={statusClass(r.status)}>{r.status}</span>
-                  </td>
-                  <td className="right mono">{r.latencyMs > 0 ? `${r.latencyMs}ms` : "—"}</td>
-                  <td className="right">{r.updated}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="badges">
+          <span className="badge">Build: Vite + React + TS</span>
+          <span className="badge">Deploy: Vercel / Pages</span>
+          <span className="badge">Mode: In-browser simulation</span>
+        </div>
+      </header>
+
+      <section className="kpis">
+        <KpiCard
+          label="Fleet Size"
+          value={kpis.fleetSize.toLocaleString()}
+          hint="Nodes in current snapshot"
+        />
+        <KpiCard
+          label="Critical Nodes"
+          value={kpis.critical.toLocaleString()}
+          hint="Immediate triage recommended"
+          emphasis={kpis.critical > 0 ? "danger" : "neutral"}
+        />
+        <KpiCard
+          label="P95 CPU Temp"
+          value={`${kpis.p95Temp.toFixed(1)}°C`}
+          hint="Thermal tail latency signal"
+          emphasis={kpis.p95Temp >= 88 ? "warn" : "neutral"}
+        />
+        <KpiCard
+          label="P95 Power"
+          value={`${kpis.p95Power.toFixed(0)} W`}
+          hint="Power delivery tail behavior"
+          emphasis={kpis.p95Power >= 420 ? "warn" : "neutral"}
+        />
+      </section>
+
+      <ControlsBar
+        statusFilter={statusFilter}
+        onStatusFilter={setStatusFilter}
+        failureFilter={failureFilter}
+        onFailureFilter={setFailureFilter}
+        onRegenerate={handleRegenerate}
+        onRunValidation={handleRunValidation}
+        onDownloadCSV={handleDownloadCSV}
+        onDownloadReport={handleDownloadReport}
+        latestRun={latestRun}
+      />
+
+      <div className="grid">
+        <div className="panel">
+          <div className="panelHeader">
+            <div>
+              <div className="panelTitle">Fleet Triage</div>
+              <div className="panelHint">
+                Sort + filter nodes by severity and failure class. Select a row
+                for details.
+              </div>
+            </div>
+            <div className="panelMeta">
+              <span className="pill">
+                Showing: {filteredSorted.length.toLocaleString()}
+              </span>
+              <span className="pill">
+                Updated: {new Date(snapshot.generated_at).toLocaleTimeString()}
+              </span>
+            </div>
+          </div>
+
+          <FleetTable
+            rows={filteredSorted}
+            sortKey={sortKey}
+            sortDir={sortDir}
+            onSortChange={(k) => {
+              if (k === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+              else {
+                setSortKey(k);
+                setSortDir("asc");
+              }
+            }}
+            selectedNodeId={selectedNodeId}
+            onSelectNode={setSelectedNodeId}
+          />
+
+          {selected && (
+            <div className="details">
+              <div className="detailsTitle">Selected Node</div>
+              <div className="detailsGrid">
+                <DetailItem label="Node" value={selected.node_id} />
+                <DetailItem label="Zone" value={selected.zone} />
+                <DetailItem label="Rack" value={selected.rack} />
+                <DetailItem label="Status" value={selected.status} />
+                <DetailItem label="Failure Class" value={selected.failure_class} />
+                <DetailItem label="Health Score" value={String(selected.health_score)} />
+                <DetailItem label="CPU Temp" value={`${selected.cpu_temp_c.toFixed(1)}°C`} />
+                <DetailItem label="Power" value={`${selected.power_w.toFixed(0)} W`} />
+                <DetailItem label="Fan" value={`${selected.fan_rpm.toFixed(0)} RPM`} />
+                <DetailItem label="Throttle" value={String(selected.throttle_events)} />
+                <DetailItem label="ECC Errors" value={String(selected.ecc_errors)} />
+                <DetailItem label="NIC Errors" value={String(selected.nic_errors)} />
+                <DetailItem label="Reboots" value={String(selected.reboot_count)} />
+                <DetailItem
+                  label="Last Seen"
+                  value={new Date(selected.last_seen).toLocaleString()}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
-        <footer className="panel-foot">
-          <span className="hint">Tip: In Cloudflare Pages set Build command to</span>
-          <span className="code">npm run build</span>
-          <span className="hint">and Output directory to</span>
-          <span className="code">dist</span>
-        </footer>
-      </section>
+        <div className="panel">
+          <div className="panelHeader">
+            <div>
+              <div className="panelTitle">Event Timeline</div>
+              <div className="panelHint">
+                Shows recent changes from fleet regeneration / validation runs.
+              </div>
+            </div>
+            <div className="panelMeta">
+              <span className="pill">Last 20 events</span>
+            </div>
+          </div>
+
+          <Timeline events={events} />
+        </div>
+      </div>
+
+      <footer className="footer">
+        <div className="footerLeft">
+          Tip: This console is intentionally frontend-only for reviewable validation
+          workflows. Add a backend later for real telemetry ingestion.
+        </div>
+        <div className="footerRight">
+          <span className="tiny">Output: dist</span>
+        </div>
+      </footer>
     </div>
   );
 }
 
-const css = `
-  :root{
-    --bg: #0b0f17;
-    --panel: #121a2a;
-    --card: #0f1726;
-    --text: #e7eefc;
-    --muted: #a6b3cc;
-    --line: rgba(255,255,255,.08);
+function DetailItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="detailItem">
+      <div className="detailLabel">{label}</div>
+      <div className="detailValue">{value}</div>
+    </div>
+  );
+}
 
-    --ok: #1db954;
-    --warn: #f5a524;
-    --down: #ff4d4f;
-  }
+function buildValidationReportMarkdown(snapshot: FleetSnapshot, run: ValidationRun | null) {
+  const nodes = snapshot.nodes;
+  const critical = nodes.filter((n) => n.status === "CRITICAL").length;
+  const degraded = nodes.filter((n) => n.status === "DEGRADED").length;
+  const healthy = nodes.filter((n) => n.status === "HEALTHY").length;
 
-  *{ box-sizing: border-box; }
-  html, body{ height: 100%; }
-  body{
-    margin: 0;
-    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
-    background: radial-gradient(1200px 600px at 20% 10%, rgba(90,120,255,.20), transparent 60%),
-                radial-gradient(900px 500px at 80% 20%, rgba(0,200,180,.14), transparent 55%),
-                var(--bg);
-    color: var(--text);
-  }
+  const p95Temp = p95(nodes.map((n) => n.cpu_temp_c));
+  const p95Power = p95(nodes.map((n) => n.power_w));
 
-  .page{
-    max-width: 1040px;
-    margin: 0 auto;
-    padding: 24px;
-  }
+  const topFailure = topCounts(nodes.map((n) => n.failure_class), 6);
 
-  .header{
-    display: flex;
-    gap: 16px;
-    align-items: flex-start;
-    justify-content: space-between;
-    margin-bottom: 18px;
-  }
+  const header = `# Hardware Validation Report
 
-  .title{
-    font-size: 22px;
-    line-height: 1.2;
-    margin: 0 0 6px 0;
-    letter-spacing: .2px;
-  }
+**Generated:** ${new Date(snapshot.generated_at).toISOString()}
+**Fleet Size:** ${nodes.length}
+**Health:** Healthy=${healthy} • Degraded=${degraded} • Critical=${critical}
 
-  .subtitle{
-    margin: 0;
-    color: var(--muted);
-    font-size: 13px;
-  }
+## Fleet Tails
+- **P95 CPU Temp:** ${p95Temp.toFixed(1)} °C
+- **P95 Power:** ${p95Power.toFixed(0)} W
 
-  .meta{
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
+## Top Failure Classes
+${topFailure.map(([k, v]) => `- **${k}**: ${v}`).join("\n")}
 
-  .chip{
-    border: 1px solid var(--line);
-    background: rgba(255,255,255,.03);
-    padding: 6px 10px;
-    border-radius: 999px;
-    color: var(--muted);
-    font-size: 12px;
-    white-space: nowrap;
-  }
-
-  .grid{
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 12px;
-    margin: 14px 0 16px;
-  }
-
-  .card{
-    border: 1px solid var(--line);
-    background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01));
-    border-radius: 14px;
-    padding: 14px 14px 12px;
-    min-height: 92px;
-  }
-
-  .card-label{
-    color: var(--muted);
-    font-size: 12px;
-    margin-bottom: 6px;
-  }
-
-  .card-value{
-    font-size: 26px;
-    font-weight: 700;
-    letter-spacing: .2px;
-  }
-
-  .card-foot{
-    margin-top: 6px;
-    color: var(--muted);
-    font-size: 12px;
-  }
-
-  .panel{
-    border: 1px solid var(--line);
-    background: rgba(18,26,42,.75);
-    backdrop-filter: blur(6px);
-    border-radius: 16px;
-    overflow: hidden;
-  }
-
-  .panel-head{
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 14px 14px 10px;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .panel-title{
-    margin: 0;
-    font-size: 14px;
-    letter-spacing: .2px;
-  }
-
-  .panel-right{
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-
-  .table-wrap{ overflow: auto; }
-  .table{
-    width: 100%;
-    border-collapse: collapse;
-    min-width: 640px;
-  }
-
-  th, td{
-    padding: 12px 14px;
-    border-bottom: 1px solid var(--line);
-    font-size: 13px;
-  }
-
-  th{
-    text-align: left;
-    color: var(--muted);
-    font-weight: 600;
-    background: rgba(255,255,255,.02);
-  }
-
-  tr:hover td{
-    background: rgba(255,255,255,.02);
-  }
-
-  .right{ text-align: right; }
-  .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-
-  .pill{
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    border-radius: 999px;
-    border: 1px solid var(--line);
-    font-size: 12px;
-    letter-spacing: .2px;
-  }
-  .pill::before{
-    content: "";
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    display: inline-block;
-  }
-  .pill-ok{ color: #bff3cf; }
-  .pill-ok::before{ background: var(--ok); }
-  .pill-warn{ color: #ffe6b3; }
-  .pill-warn::before{ background: var(--warn); }
-  .pill-down{ color: #ffd0d0; }
-  .pill-down::before{ background: var(--down); }
-
-  .panel-foot{
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 12px 14px 14px;
-    color: var(--muted);
-    font-size: 12px;
-  }
-
-  .code{
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-    border: 1px solid var(--line);
-    background: rgba(255,255,255,.03);
-    padding: 3px 8px;
-    border-radius: 8px;
-    color: var(--text);
-  }
-
-  @media (max-width: 900px){
-    .grid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  }
-
-  @media (max-width: 520px){
-    .header{ flex-direction: column; align-items: stretch; }
-    .meta{ justify-content: flex-start; }
-    .grid{ grid-template-columns: 1fr; }
-  }
+## Validation Suite
 `;
+
+  if (!run) {
+    return (
+      header +
+      `No validation suite has been executed for this snapshot yet.
+
+Recommended:
+- Run the Validation Suite
+- Export CSV for deeper offline analysis
+`
+    );
+  }
+
+  const checks = run.checks
+    .map((c) => `- ${c.pass ? "✅" : "❌"} **${c.name}** — ${c.detail}`)
+    .join("\n");
+
+  return (
+    header +
+    `**Run ID:** ${run.run_id}
+**Overall:** ${run.summary.overall_pass ? "PASS" : "FAIL"}
+**Checks:** PASS=${run.summary.pass_count} • FAIL=${run.summary.fail_count}
+
+### Check Results
+${checks}
+
+## Notes for Cross-Functional Review
+- **Power:** investigate nodes flagged for power spikes / high P95 power.
+- **Thermal:** validate heatsink/contact/fan curves for thermal throttle clusters.
+- **Hardware:** inspect ECC burst nodes for DIMM instability; review reboot loops.
+- **Software:** correlate driver/firmware versions with NIC flaps where applicable.
+`
+  );
+}
+
+function topCounts(items: string[], k: number): Array<[string, number]> {
+  const m = new Map<string, number>();
+  for (const it of items) m.set(it, (m.get(it) ?? 0) + 1);
+  return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, k);
+}
